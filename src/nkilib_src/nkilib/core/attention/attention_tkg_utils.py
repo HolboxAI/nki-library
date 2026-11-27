@@ -14,6 +14,7 @@
 
 """Shared configuration, tiling constants, and helpers for the token-generation attention (attention_tkg) kernel."""
 
+import os as _os
 import math
 import os
 from dataclasses import dataclass
@@ -28,7 +29,13 @@ from ..utils.kernel_assert import kernel_assert
 _ATTN_TKG_NO_SWAP = os.environ.get("NKILIB_EXPERIMENTAL_ATTN_TKG_NO_SWAP", "").lower() in ("1", "true", "yes", "on")
 
 # Flash attention: use FA when s_prior > threshold, tile size = threshold
-_FA_TILE_SIZE = 8 * 1024  # 8K - serves as both threshold and tile size
+# COVEX: COVEX_NKILIB_FA_TILE_SIZE overrides the FA tile (default 8K, the upstream value). It is read once at
+# import, so it is a compile-time constant. A smaller power-of-two tile (e.g. 2048) lets dynamic FA early exit
+# (max_context_len) skip work when s_prior is <= 8K, where upstream never tiles. The block-KV assert
+# (tile % (block_len * 128) == 0) still applies and fails loudly at compile time for incompatible block sizes.
+_FA_TILE_SIZE = int(_os.environ.get("COVEX_NKILIB_FA_TILE_SIZE", 8 * 1024))
+if _FA_TILE_SIZE < 512 or _FA_TILE_SIZE & (_FA_TILE_SIZE - 1):
+    raise ValueError(f"COVEX_NKILIB_FA_TILE_SIZE must be a power of two >= 512, got {_FA_TILE_SIZE}")
 
 # Batch tiling: SBUF memory budget for batch-dependent buffers
 # Rule of thumb for SBUF memory budget: 8 * bs * q_head * s_active * fa_tile_s_prior <= _BATCH_TILE_SBUF_BUDGET
