@@ -114,6 +114,11 @@ def transformer_tkg(
     W_up_scales: Optional[List[nl.NkiTensor]] = None,
     W_down_scales: Optional[List[nl.NkiTensor]] = None,
     dtype_mode: DtypeMode = DtypeMode.NON_OCP,
+    # COVEX: per-layer QK-norm (pre-RoPE RMSNorm on Q and K, e.g. Qwen3). Each entry is [1, d_head] @ HBM.
+    # Both lists given together enable it; None keeps upstream behaviour (no QK-norm).
+    W_q_norm_gammas: Optional[List[nl.NkiTensor]] = None,
+    W_k_norm_gammas: Optional[List[nl.NkiTensor]] = None,
+    qk_norm_eps: Optional[float] = None,
 ):
     """
     Transformer token generation forward pass megakernel.
@@ -207,6 +212,16 @@ def transformer_tkg(
     # ==================== Main Loop ====================
     current = X
 
+    use_qk_norm = W_q_norm_gammas is not None or W_k_norm_gammas is not None
+    if use_qk_norm and not (
+        W_q_norm_gammas is not None
+        and W_k_norm_gammas is not None
+        and len(W_q_norm_gammas) == num_layers
+        and len(W_k_norm_gammas) == num_layers
+    ):
+        raise ValueError("COVEX QK-norm needs both W_q_norm_gammas and W_k_norm_gammas with one entry per layer")
+    qk_eps = qk_norm_eps if qk_norm_eps is not None else eps
+
     for layer_idx in range(num_layers):
         W_qkv = W_qkvs[layer_idx]
         W_out = W_outs[layer_idx]
@@ -245,10 +260,10 @@ def transformer_tkg(
                 quantization_type_qkv=QuantizationType.NONE,
                 weight_dequant_scale_qkv=None,
                 input_dequant_scale_qkv=None,
-                rmsnorm_QK_pre_rope_enabled=False,
-                rmsnorm_QK_pre_rope_eps=eps,
-                rmsnorm_QK_pre_rope_W_Q=None,
-                rmsnorm_QK_pre_rope_W_K=None,
+                rmsnorm_QK_pre_rope_enabled=use_qk_norm,
+                rmsnorm_QK_pre_rope_eps=qk_eps,
+                rmsnorm_QK_pre_rope_W_Q=W_q_norm_gammas[layer_idx] if use_qk_norm else None,
+                rmsnorm_QK_pre_rope_W_K=W_k_norm_gammas[layer_idx] if use_qk_norm else None,
                 cos=RoPE_cos,
                 sin=RoPE_sin,
                 rope_contiguous_layout=True,
@@ -345,10 +360,10 @@ def transformer_tkg(
                 quantization_type_qkv=QuantizationType.NONE,
                 weight_dequant_scale_qkv=None,
                 input_dequant_scale_qkv=None,
-                rmsnorm_QK_pre_rope_enabled=False,
-                rmsnorm_QK_pre_rope_eps=eps,
-                rmsnorm_QK_pre_rope_W_Q=None,
-                rmsnorm_QK_pre_rope_W_K=None,
+                rmsnorm_QK_pre_rope_enabled=use_qk_norm,
+                rmsnorm_QK_pre_rope_eps=qk_eps,
+                rmsnorm_QK_pre_rope_W_Q=W_q_norm_gammas[layer_idx] if use_qk_norm else None,
+                rmsnorm_QK_pre_rope_W_K=W_k_norm_gammas[layer_idx] if use_qk_norm else None,
                 cos=RoPE_cos,
                 sin=RoPE_sin,
                 rope_contiguous_layout=True,
